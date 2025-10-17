@@ -6,71 +6,6 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import prisma from './db.js'
 
-// 데이터베이스 초기화 함수
-async function initializeDatabase() {
-  try {
-    console.log('🔍 데이터베이스 초기화 확인 중...')
-    
-    // 메뉴가 이미 있는지 확인
-    const existingMenus = await prisma.menu.findMany()
-    
-    if (existingMenus.length > 0) {
-      console.log('✅ 데이터베이스가 이미 초기화되어 있습니다.')
-      return
-    }
-    
-    console.log('🌱 데이터베이스 초기화 시작...')
-    
-    // 메뉴 데이터 생성
-    const americanoIce = await prisma.menu.create({
-      data: {
-        name: '아메리카노(ICE)',
-        description: '깔끔한 산미와 청량감',
-        price: 4000,
-        imageUrl: '/img/americano-ice.jpg',
-        stockQty: 10,
-      },
-    })
-
-    const americanoHot = await prisma.menu.create({
-      data: {
-        name: '아메리카노(HOT)',
-        description: '균형 잡힌 바디감',
-        price: 4000,
-        imageUrl: '/img/americano-hot.jpg',
-        stockQty: 10,
-      },
-    })
-
-    const caffeLatte = await prisma.menu.create({
-      data: {
-        name: '카페라떼',
-        description: '부드러운 우유 거품',
-        price: 5000,
-        imageUrl: '/img/caffe-latte.jpg',
-        stockQty: 10,
-      },
-    })
-
-    // 옵션 데이터 생성
-    await prisma.option.createMany({
-      data: [
-        { menuId: americanoIce.id, name: 'shot', priceDelta: 500 },
-        { menuId: americanoIce.id, name: 'syrup', priceDelta: 0 },
-        { menuId: americanoHot.id, name: 'shot', priceDelta: 500 },
-        { menuId: americanoHot.id, name: 'syrup', priceDelta: 0 },
-        { menuId: caffeLatte.id, name: 'shot', priceDelta: 500 },
-        { menuId: caffeLatte.id, name: 'syrup', priceDelta: 0 },
-      ],
-    })
-
-    console.log('✅ 데이터베이스 초기화 완료!')
-  } catch (error) {
-    console.error('❌ 데이터베이스 초기화 실패:', error)
-    // 초기화 실패해도 서버는 계속 실행
-  }
-}
-
 // .env 파일 로드
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -86,17 +21,6 @@ app.use(morgan('dev'))
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() })
-})
-
-// 데이터베이스 초기화 API (개발/배포용)
-app.post('/api/init-db', async (req, res) => {
-  try {
-    await initializeDatabase()
-    res.json({ success: true, message: '데이터베이스 초기화 완료' })
-  } catch (error) {
-    console.error('API 초기화 실패:', error)
-    res.status(500).json({ error: '초기화 실패', message: error.message })
-  }
 })
 
 // 메뉴 조회
@@ -406,12 +330,9 @@ app.patch('/api/menus/:menuId/stock', async (req, res) => {
   }
 })
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`🚀 Server listening on http://localhost:${PORT}`)
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`)
-  
-  // 데이터베이스 초기화 실행
-  await initializeDatabase()
 })
 
 
