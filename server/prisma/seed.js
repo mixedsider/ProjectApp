@@ -37,12 +37,12 @@ async function main() {
   // 옵션 데이터 생성
   await prisma.option.createMany({
     data: [
-      { menuId: americanoIce.id, name: '샷 추가', priceDelta: 500 },
-      { menuId: americanoIce.id, name: '시럽 추가', priceDelta: 0 },
-      { menuId: americanoHot.id, name: '샷 추가', priceDelta: 500 },
-      { menuId: americanoHot.id, name: '시럽 추가', priceDelta: 0 },
-      { menuId: caffeLatte.id, name: '샷 추가', priceDelta: 500 },
-      { menuId: caffeLatte.id, name: '시럽 추가', priceDelta: 0 },
+      { menuId: americanoIce.id, name: 'shot', priceDelta: 500 },
+      { menuId: americanoIce.id, name: 'syrup', priceDelta: 0 },
+      { menuId: americanoHot.id, name: 'shot', priceDelta: 500 },
+      { menuId: americanoHot.id, name: 'syrup', priceDelta: 0 },
+      { menuId: caffeLatte.id, name: 'shot', priceDelta: 500 },
+      { menuId: caffeLatte.id, name: 'syrup', priceDelta: 0 },
     ],
   })
 

@@ -46,10 +46,16 @@ app.get('/api/menus', async (req, res) => {
 // 주문 생성
 app.post('/api/orders', async (req, res) => {
   try {
+    console.log('=== 주문 요청 시작 ===')
+    console.log('요청 데이터:', JSON.stringify(req.body, null, 2))
+    
     const { items } = req.body || {}
     if (!Array.isArray(items) || items.length === 0) {
+      console.log('❌ 잘못된 아이템 데이터:', items)
       return res.status(400).json({ error: 'INVALID_ITEMS' })
     }
+    
+    console.log('✅ 아이템 검증 통과, 아이템 수:', items.length)
 
     // 트랜잭션으로 주문 생성 및 재고 차감
     const result = await prisma.$transaction(async (tx) => {
@@ -58,15 +64,21 @@ app.post('/api/orders', async (req, res) => {
 
       // 각 메뉴별 재고 확인 및 차감
       for (const item of items) {
+        console.log(`🔍 메뉴 처리 중: ID=${item.menuId}, 수량=${item.quantity}, 옵션=${item.optionIds}`)
+        
         const menu = await tx.menu.findUnique({
           where: { id: item.menuId },
         })
         
         if (!menu) {
+          console.log(`❌ 메뉴를 찾을 수 없음: ${item.menuId}`)
           throw new Error(`메뉴를 찾을 수 없습니다: ${item.menuId}`)
         }
         
+        console.log(`✅ 메뉴 찾음: ${menu.name}, 현재 재고: ${menu.stockQty}`)
+        
         if (menu.stockQty < item.quantity) {
+          console.log(`❌ 재고 부족: 필요=${item.quantity}, 보유=${menu.stockQty}`)
           throw new Error(`재고가 부족합니다: ${menu.name}`)
         }
 
@@ -78,16 +90,35 @@ app.post('/api/orders', async (req, res) => {
 
         // 옵션 가격 계산
         let optionTotal = 0
+        const selectedOptions = []
         if (item.optionIds && item.optionIds.length > 0) {
+          console.log(`💰 옵션 처리 중: ${item.optionIds}`)
+          
+          // 옵션 정보를 데이터베이스에서 조회
           const options = await tx.option.findMany({
-            where: { id: { in: item.optionIds } },
+            where: {
+              menuId: item.menuId,
+              name: {
+                in: item.optionIds
+              }
+            }
           })
-          optionTotal = options.reduce((sum, opt) => sum + opt.priceDelta, 0)
+          
+          console.log(`🔍 찾은 옵션들:`, options)
+          
+          optionTotal = options.reduce((sum, opt) => {
+            console.log(`  - 옵션 ${opt.name}: +${opt.priceDelta}원`)
+            selectedOptions.push(opt)
+            return sum + opt.priceDelta
+          }, 0)
+          console.log(`💰 옵션 총 가격: ${optionTotal}원`)
         }
 
         const unitPrice = menu.price + optionTotal
         const lineTotal = unitPrice * item.quantity
         totalAmount += lineTotal
+
+        console.log(`💰 가격 계산: 메뉴=${menu.price}원 + 옵션=${optionTotal}원 = 단가=${unitPrice}원, 총액=${lineTotal}원`)
 
         orderItems.push({
           menuId: item.menuId,
@@ -98,12 +129,14 @@ app.post('/api/orders', async (req, res) => {
       }
 
       // 주문 생성
+      console.log(`📝 주문 생성 중, 총 금액: ${totalAmount}원`)
       const order = await tx.order.create({
         data: {
           totalAmount,
           status: 'PLACED',
         },
       })
+      console.log(`✅ 주문 생성 완료, 주문 ID: ${order.id}`)
 
       // 주문 항목 생성
       for (const item of orderItems) {
@@ -117,15 +150,21 @@ app.post('/api/orders', async (req, res) => {
         // 옵션 연결 (해당하는 경우)
         const originalItem = items.find(i => i.menuId === item.menuId)
         if (originalItem.optionIds && originalItem.optionIds.length > 0) {
+          // 해당 메뉴의 옵션들을 다시 조회하여 정수 ID 사용
           const options = await tx.option.findMany({
-            where: { id: { in: originalItem.optionIds } },
+            where: {
+              menuId: item.menuId,
+              name: {
+                in: originalItem.optionIds
+              }
+            }
           })
           
           for (const option of options) {
             await tx.orderItemOption.create({
               data: {
                 orderItemId: orderItem.id,
-                optionId: option.id,
+                optionId: option.id, // 데이터베이스의 정수 ID 사용
                 priceDelta: option.priceDelta,
               },
             })
@@ -136,17 +175,25 @@ app.post('/api/orders', async (req, res) => {
       return order
     })
 
+    console.log(`🎉 주문 성공! 주문 ID: ${result.id}, 총 금액: ${result.totalAmount}원`)
     res.status(201).json({
       orderId: result.id,
       totalAmount: result.totalAmount,
       status: result.status,
     })
   } catch (error) {
-    console.error('주문 생성 오류:', error)
+    console.error('❌ 주문 생성 실패!')
+    console.error('에러 메시지:', error.message)
+    console.error('에러 스택:', error.stack)
+    console.error('요청 데이터:', JSON.stringify(req.body, null, 2))
+    
     if (error.message.includes('재고가 부족') || error.message.includes('메뉴를 찾을 수 없습니다')) {
+      console.error('❌ 재고/메뉴 관련 에러')
       return res.status(409).json({ error: 'CONFLICT', message: error.message })
     }
-    res.status(500).json({ error: 'INTERNAL_ERROR' })
+    
+    console.error('❌ 서버 내부 에러')
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: error.message })
   }
 })
 

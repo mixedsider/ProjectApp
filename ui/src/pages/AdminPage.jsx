@@ -1,14 +1,5 @@
-import { useMemo, useState } from 'react'
-
-const initialInventory = [
-  { id: 'americano-ice', name: '아메리카노(ICE)', stock: 10 },
-  { id: 'americano-hot', name: '아메리카노(HOT)', stock: 10 },
-  { id: 'caffe-latte', name: '카페라떼', stock: 10 },
-]
-
-const initialOrders = [
-  { id: 'o-1', createdAt: new Date(), items: [{ name: '아메리카노(ICE)', qty: 1 }], amount: 4000, status: 'PLACED' },
-]
+import { useMemo, useState, useEffect } from 'react'
+import api from '../services/api.js'
 
 function statusBadge(stock){
   if(stock <= 0) return { label: '품절', color: '#ef4444' }
@@ -17,8 +8,29 @@ function statusBadge(stock){
 }
 
 export default function AdminPage(){
-  const [inventory, setInventory] = useState(initialInventory)
-  const [orders, setOrders] = useState(initialOrders)
+  const [inventory, setInventory] = useState([])
+  const [orders, setOrders] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const [menuData, orderData] = await Promise.all([
+        api.getMenus(true), // 재고 포함
+        api.getOrders()
+      ])
+      setInventory(menuData)
+      setOrders(orderData.items || [])
+    } catch (error) {
+      console.error('데이터 로드 실패:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const stats = useMemo(()=>{
     return {
@@ -29,18 +41,69 @@ export default function AdminPage(){
     }
   }, [orders])
 
-  const changeStock = (id, delta)=>{
-    setInventory(prev=> prev.map(i=> i.id===id ? { ...i, stock: Math.max(0, Math.min(999, i.stock + delta)) } : i))
+  const changeStock = async (id, delta) => {
+    try {
+      const result = await api.updateMenuStock(id, delta)
+      setInventory(prev => prev.map(i => 
+        i.id === id ? { ...i, stockQty: result.stockQty } : i
+      ))
+    } catch (error) {
+      console.error('재고 업데이트 실패:', error)
+      alert('재고 업데이트에 실패했습니다.')
+    }
   }
 
-  const acceptOrder = (id)=>{
-    setOrders(prev=> prev.map(o=> o.id===id && o.status==='PLACED' ? { ...o, status:'ACCEPTED' } : o))
+  const acceptOrder = async (id) => {
+    try {
+      await api.updateOrderStatus(id, 'ACCEPTED')
+      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'ACCEPTED' } : o))
+    } catch (error) {
+      console.error('주문 접수 실패:', error)
+      alert('주문 접수에 실패했습니다.')
+    }
   }
-  const startMake = (id)=>{
-    setOrders(prev=> prev.map(o=> o.id===id && (o.status==='PLACED' || o.status==='ACCEPTED') ? { ...o, status:'IN_PROGRESS' } : o))
+
+  const startMake = async (id) => {
+    try {
+      await api.updateOrderStatus(id, 'IN_PROGRESS')
+      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'IN_PROGRESS' } : o))
+    } catch (error) {
+      console.error('제조 시작 실패:', error)
+      alert('제조 시작에 실패했습니다.')
+    }
   }
-  const finishOrder = (id)=>{
-    setOrders(prev=> prev.map(o=> o.id===id && o.status==='IN_PROGRESS' ? { ...o, status:'DONE' } : o))
+
+  const finishOrder = async (id) => {
+    try {
+      await api.updateOrderStatus(id, 'DONE')
+      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'DONE' } : o))
+    } catch (error) {
+      console.error('제조 완료 실패:', error)
+      alert('제조 완료 처리에 실패했습니다.')
+    }
+  }
+
+  const cancelOrder = async (id) => {
+    if (!confirm('정말로 이 주문을 취소하시겠습니까?')) {
+      return
+    }
+    
+    try {
+      await api.cancelOrder(id)
+      setOrders(prev => prev.map(o => o.id === id ? { ...o, status: 'CANCELLED' } : o))
+      alert('주문이 취소되었습니다.')
+    } catch (error) {
+      console.error('주문 취소 실패:', error)
+      alert('주문 취소에 실패했습니다.')
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="page" style={{display:'flex',flexDirection:'column',gap:20, textAlign:'center', padding:'40px'}}>
+        <div>데이터를 불러오는 중...</div>
+      </div>
+    )
   }
 
   return (
@@ -68,12 +131,12 @@ export default function AdminPage(){
         <h2 style={{margin:'8px 0'}}>재고 현황</h2>
         <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
           {inventory.map(item=>{
-            const badge = statusBadge(item.stock)
+            const badge = statusBadge(item.stockQty)
             return (
               <div key={item.id} style={{background:'#fff',border:'1px solid #e5e7eb',borderRadius:12,padding:16,display:'flex',flexDirection:'column',gap:8}}>
                 <div style={{fontWeight:700}}>{item.name}</div>
                 <div style={{display:'flex',alignItems:'center',gap:12}}>
-                  <span>재고 {item.stock}개</span>
+                  <span>재고 {item.stockQty}개</span>
                   <span style={{color:badge.color,fontWeight:700}}>{badge.label}</span>
                   <div style={{display:'flex',gap:8, marginLeft:'auto'}}>
                     <button className="btn btn-icon" aria-label="increase" onClick={()=>changeStock(item.id, +1)}>+</button>
@@ -93,26 +156,32 @@ export default function AdminPage(){
           {orders.map(o=> (
             <div key={o.id} style={{display:'grid',gridTemplateColumns:'220px 1fr 120px 260px',gap:12,alignItems:'center',padding:'12px 16px',borderBottom:'1px solid #e5e7eb'}}>
               <div style={{color:'#6b7280'}}>
-                {new Intl.DateTimeFormat('ko-KR', { dateStyle:'medium', timeStyle:'short' }).format(o.createdAt)}
+                {new Intl.DateTimeFormat('ko-KR', { dateStyle:'medium', timeStyle:'short' }).format(new Date(o.createdAt))}
               </div>
               <div>
                 {o.items.map((i,idx)=>(
-                  <div key={idx}>{i.name} x {i.qty}</div>
+                  <div key={idx}>{i.menu?.name || '메뉴명 없음'} x {i.quantity}</div>
                 ))}
               </div>
-              <div style={{fontWeight:700,textAlign:'right'}}>{new Intl.NumberFormat('ko-KR').format(o.amount)}원</div>
+              <div style={{fontWeight:700,textAlign:'right'}}>{new Intl.NumberFormat('ko-KR').format(o.totalAmount || 0)}원</div>
               <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
                 {o.status==='PLACED' && (
                   <button className="btn" onClick={()=>acceptOrder(o.id)}>주문 접수</button>
                 )}
-                {(o.status==='PLACED' || o.status==='ACCEPTED') && (
-                  <button className="btn" onClick={()=>startMake(o.id)}>제조 시작</button>
+                {o.status==='ACCEPTED' && (
+                  <>
+                    <button className="btn" onClick={()=>startMake(o.id)}>제조 시작</button>
+                    <button className="btn" onClick={()=>cancelOrder(o.id)} style={{background:'#ef4444'}}>주문 취소</button>
+                  </>
                 )}
                 {o.status==='IN_PROGRESS' && (
                   <button className="btn" onClick={()=>finishOrder(o.id)}>제조 완료</button>
                 )}
                 {o.status==='DONE' && (
                   <span style={{color:'#6b7280'}}>완료</span>
+                )}
+                {o.status==='CANCELLED' && (
+                  <span style={{color:'#ef4444'}}>취소</span>
                 )}
               </div>
             </div>
