@@ -158,3 +158,121 @@
 - StatBar: 숫자는 볼드, 단위 라벨은 보조 텍스트.
 - Inventory 카드: 재고 수는 고정폭 폰트, `+/-` 버튼은 터치 영역 32px 이상.
 - OrderRow: 상태 배지는 색상으로 구분(접수 파랑, 제조중 주황, 완료 회색).
+
+## 5. 백엔드 PRD
+
+### 5.1 데이터 모델
+- Menus: { id, name, description, price, imageUrl, stockQty, createdAt, updatedAt }
+- Options: { id, menuId, name, priceDelta, createdAt, updatedAt }
+- Orders: { id, createdAt, status(PLACED|ACCEPTED|IN_PROGRESS|DONE), totalAmount }
+- OrderItems: { id, orderId, menuId, quantity, unitPrice, lineTotal }
+- OrderItemOptions: { id, orderItemId, optionId, priceDelta }
+
+설명
+- Menus.stockQty는 관리자 화면에만 노출, 주문 화면에는 노출하지 않음(품절 등 정책은 FE에서 후처리 가능).
+- Orders.totalAmount는 정규화와 조회 성능을 위해 집계 컬럼으로 저장.
+
+### 5.2 사용자 흐름(데이터 스키마 관점)
+1) Menus 조회: 클라이언트 진입 시 메뉴 목록을 조회해 카드로 렌더. `stockQty`는 관리자 화면에서만 표시.
+2) 장바구니: 사용자가 메뉴와 옵션을 선택해 담으면 FE 상태로 유지.
+3) 주문 생성: 사용자가 `주문하기`를 누르면 Orders + OrderItems(+ OrderItemOptions)를 트랜잭션으로 생성한다. `Orders.createdAt`, `Orders.totalAmount` 저장.
+4) 관리자 주문 현황: Orders를 상태별로 조회해 리스트로 표시. 상태 흐름은 `PLACED → ACCEPTED → IN_PROGRESS → DONE`.
+
+트랜잭션 규칙(주요 불변성)
+- 주문 생성 시: 재고 차감은 메뉴별 수량 합계만큼 감소. 음수 허용 금지.
+- 상태 변경 시: 허용된 순서만 가능, 되돌리기 불가. 완료 시각은 `updatedAt`에 기록(필요 시 별도 `finishedAt`).
+
+### 5.3 API 설계
+
+베이스 URL: `/api`
+
+- GET `/menus`
+  - 설명: 주문 화면에 표시할 메뉴 목록 조회
+  - 응답: `[{ id, name, description, price, imageUrl }]`(주문 화면에는 `stockQty` 미포함)
+  - 관리자 전용 확장: 쿼리 `?includeStock=true` 시 `stockQty` 포함
+
+- POST `/orders`
+  - 설명: 주문 생성(장바구니 → 주문)
+  - 요청(JSON):
+    - `{ items: [{ menuId, quantity, optionIds: [] }], createdAt? }`
+  - 처리:
+    - 트랜잭션으로 Orders, OrderItems, OrderItemOptions 생성
+    - Menus.stockQty를 품목별 `quantity`만큼 차감(0 미만이면 롤백)
+  - 응답: `{ orderId, totalAmount, status: 'PLACED' }`
+
+- GET `/orders/:orderId`
+  - 설명: 단일 주문 상세 조회
+  - 응답: `{ id, createdAt, status, totalAmount, items: [{ menuId, name, quantity, unitPrice, lineTotal, options: [{ id, name, priceDelta }] }] }`
+
+- GET `/orders`
+  - 설명: 관리자 주문 리스트 조회(상태/기간/페이지 필터)
+  - 파라미터: `?status=PLACED|ACCEPTED|IN_PROGRESS|DONE&limit=20&cursor=...`
+  - 응답: `{ items: [...], nextCursor }`
+
+- PATCH `/orders/:orderId/status`
+  - 설명: 주문 상태 전환
+  - 요청: `{ status: 'ACCEPTED'|'IN_PROGRESS'|'DONE' }`
+  - 규칙: 현재 상태에서 허용된 다음 상태만 승인. 위반 시 409.
+
+- PATCH `/menus/:menuId/stock`
+  - 설명: 관리자 재고 증감
+  - 요청: `{ delta: number }` // + 증가, - 감소, 0~999 범위 유지
+  - 응답: `{ menuId, stockQty }`
+
+### 5.4 에러 코드/응답 예시
+- 400 VALIDATION_ERROR: 잘못된 파라미터/스키마 불일치
+- 404 NOT_FOUND: 메뉴/주문 없음
+- 409 CONFLICT: 재고 부족, 잘못된 상태 전환
+- 500 INTERNAL_ERROR: 서버 처리 실패
+
+### 5.5 보안/운영
+- CORS: FE 도메인 허용
+- Rate Limit: 주문 생성/상태 변경 엔드포인트에 초당 제한 적용(개발 단계선 완화)
+- 로깅: 주문 생성, 상태 변경, 재고 변경은 감사 로그 남김
+
+### 5.6 마이그레이션 스크립트(초안)
+PostgreSQL 예시
+```
+CREATE TABLE menus (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  price INTEGER NOT NULL,
+  image_url TEXT,
+  stock_qty INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE options (
+  id SERIAL PRIMARY KEY,
+  menu_id INTEGER REFERENCES menus(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  price_delta INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'PLACED',
+  total_amount INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE order_items (
+  id SERIAL PRIMARY KEY,
+  order_id INTEGER REFERENCES orders(id) ON DELETE CASCADE,
+  menu_id INTEGER REFERENCES menus(id),
+  quantity INTEGER NOT NULL,
+  unit_price INTEGER NOT NULL,
+  line_total INTEGER NOT NULL
+);
+
+CREATE TABLE order_item_options (
+  id SERIAL PRIMARY KEY,
+  order_item_id INTEGER REFERENCES order_items(id) ON DELETE CASCADE,
+  option_id INTEGER REFERENCES options(id),
+  price_delta INTEGER NOT NULL
+);
+```
