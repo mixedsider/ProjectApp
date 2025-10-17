@@ -1,0 +1,82 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Menu {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  price       Int
+  imageUrl    String?
+  stockQty    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  options     Option[]
+  orderItems  OrderItem[]
+
+  @@map("menus")
+}
+
+model Option {
+  id        Int      @id @default(autoincrement())
+  menuId    Int
+  name      String
+  priceDelta Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  menu           Menu            @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  orderItemOptions OrderItemOption[]
+
+  @@map("options")
+}
+
+model Order {
+  id          Int      @id @default(autoincrement())
+  createdAt   DateTime @default(now())
+  status      String   @default("PLACED")
+  totalAmount Int      @default(0)
+
+  items OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  orderId   Int
+  menuId    Int
+  quantity  Int
+  unitPrice Int
+  lineTotal Int
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menu    Menu    @relation(fields: [menuId], references: [id])
+  options OrderItemOption[]
+
+  @@map("order_items")
+}
+
+model OrderItemOption {
+  id          Int @id @default(autoincrement())
+  orderItemId Int
+  optionId    Int
+  priceDelta  Int
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  option    Option    @relation(fields: [optionId], references: [id])
+
+  @@map("order_item_options")
+}
