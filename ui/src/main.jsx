@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import './index.css'
 import App from './App.jsx'
 import OrderPage from './pages/OrderPage.jsx'
+import AdminPage from './pages/AdminPage.jsx'
 
 const router = createBrowserRouter([
   {
@@ -12,7 +13,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <OrderPage /> },
       { path: 'order', element: <OrderPage /> },
-      { path: 'admin', element: <div style={{padding:24}}>관리자 화면은 추후 구현됩니다.</div> },
+      { path: 'admin', element: <AdminPage /> },
     ],
   },
 ])
